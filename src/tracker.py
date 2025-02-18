@@ -1,5 +1,8 @@
+import json
 import os.path
+from collections import defaultdict
 
+import yaml
 from loguru import logger
 import sys
 from pydantic_settings import BaseSettings
@@ -58,6 +61,8 @@ class PersonTracker:
             )
         self._init_tracker()
 
+        self._intervals: dict[str | int, list[list[int]]] = defaultdict(list[list[int]])
+
     def _init_tracker(self) -> None:
         keypoint_thresh = self.video.input_height / config.keypoint_scale_factor
         self.tracker = Tracker(
@@ -77,17 +82,31 @@ class PersonTracker:
         )
 
     def process_video(self) -> None:
-        for frame in self.video:
-            processed_frame = self._process_frame(frame)
+        for frame_number, frame in enumerate(self.video):
+            processed_frame = self._process_frame(
+                frame_number=frame_number, frame=frame
+            )
             self.video.write(processed_frame)
             cv2.imshow("Tracking", cv2.resize(processed_frame, None, fx=0.75, fy=0.75))
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
 
-    def _process_frame(self, frame: np.ndarray) -> np.ndarray:
+    def _process_frame(self, frame_number: int, frame: np.ndarray) -> np.ndarray:
         yolo_results = self._run_yolo_detection(frame)
         detections = self._create_detections(frame, yolo_results)
         tracked_objects = self.tracker.update(detections=detections)
+
+        for obj in tracked_objects:
+            obj_id = obj.id
+            if (
+                obj_id in self._intervals
+                and self._intervals[obj_id]
+                and self._intervals[obj_id][-1][1] >= frame_number - 1
+            ):
+                self._intervals[obj_id][-1][1] = frame_number
+            else:
+                self._intervals[obj_id].append([frame_number, frame_number])
+
         return self._draw_results(frame, tracked_objects)
 
     def _run_yolo_detection(self, frame: np.ndarray) -> Results:
@@ -166,6 +185,17 @@ class PersonTracker:
     @staticmethod
     def _cosine_distance(a: np.ndarray, b: np.ndarray) -> float:
         return 1 - np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+    def save_intervals(self, filename: str) -> None:
+        with open(filename, "wb") as f:
+            if filename.lower().endswith(".json"):
+                json.dump(self._intervals, f)  # type: ignore
+            elif filename.lower().endswith(".yml") or filename.lower().endswith(
+                ".yaml"
+            ):
+                yaml.safe_dump(dict(self._intervals), f)
+            else:
+                raise ValueError("filename must be json or yaml")
 
 
 if __name__ == "__main__":

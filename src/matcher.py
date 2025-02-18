@@ -2,6 +2,8 @@ import json
 import sys
 from typing import NamedTuple
 
+import yaml
+
 
 class Interval(NamedTuple):
     start: int
@@ -13,9 +15,16 @@ class Track(NamedTuple):
     intervals: list[Interval]
 
     @classmethod
-    def from_json(cls, filename: str) -> list["Track"]:
-        with open(filename, "r") as f:
-            data = json.load(f)
+    def from_file(cls, filename: str) -> list["Track"]:
+        with open(filename, "rb") as f:
+            if filename.lower().endswith(".json"):
+                data = json.load(f)
+            elif filename.lower().endswith(".yml") or filename.lower().endswith(
+                ".yaml"
+            ):
+                data = yaml.safe_load(f)
+            else:
+                raise ValueError("filename must be json or yaml")
         return [
             cls(
                 label=label,
@@ -32,7 +41,9 @@ class Track(NamedTuple):
         sorted_intervals = sorted(self.intervals, key=lambda x: x.start)
         for i, interval in enumerate(sorted_intervals[1:]):
             if interval.start <= sorted_intervals[i].end:
-                raise ValueError(f"Overlapping intervals: {interval} and {sorted_intervals[i]}")
+                raise ValueError(
+                    f"Overlapping intervals: {interval} and {sorted_intervals[i]}"
+                )
         return sorted_intervals
 
     def __and__(self, track: "Track") -> float:
@@ -106,17 +117,20 @@ class TracksMatch(NamedTuple):
     @property
     def score(self) -> float:
         return sum(match.iou for match in self.matches) / (
-                len(self.matches) + len(self.unmatched_a) + len(self.unmatched_b))
+            len(self.matches) + len(self.unmatched_a) + len(self.unmatched_b)
+        )
 
     def __repr__(self) -> str:
         pretty = []
         for match in self.matches:
-            pretty.append(f"[+] {match.track_a.label} -> {match.track_b.label} (IOU: {match.iou})")
+            pretty.append(
+                f"[+] {match.track_a.label} -> {match.track_b.label} (IOU: {match.iou:0.3f})"
+            )
         for track in self.unmatched_a:
             pretty.append(f"[-] {track.label} -> ?")
         for track in self.unmatched_b:
             pretty.append(f"[-] ? -> {track.label}")
-        pretty.append(f"Score: {self.score}")
+        pretty.append(f"Score: {self.score:0.3f}")
         return "\n".join(pretty)
 
     def __str__(self) -> str:
@@ -154,6 +168,6 @@ def match_tracks(tracks_a: list[Track], tracks_b: list[Track]) -> TracksMatch:
 
 
 if __name__ == "__main__":
-    tracks_a = Track.from_json(sys.argv[1])
-    tracks_b = Track.from_json(sys.argv[2])
+    tracks_a = Track.from_file(sys.argv[1])
+    tracks_b = Track.from_file(sys.argv[2])
     print(match_tracks(tracks_a, tracks_b))
