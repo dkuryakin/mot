@@ -13,8 +13,10 @@ from tracker import PersonTracker
 
 @dataclass
 class Metrics:
-    metrics: dict[str, float]
-    score: float
+    metrics_iou: dict[str, float]
+    metrics_count: dict[str, float]
+    score_iou: float
+    score_count: float
     logs: str
 
 
@@ -41,14 +43,18 @@ def list_video_names() -> list[str]:
 def calculate_metrics() -> Metrics:
     matches = []
     os.makedirs("markup/predict", exist_ok=True)
-    metrics = Metrics(metrics={}, score=0, logs="")
+    metrics = Metrics(
+        metrics_iou={}, metrics_count={}, score_iou=0, score_count=0, logs=""
+    )
     logs = []
     for fname in os.listdir("markup/predict"):
         tracks_b = Track.from_file(f"markup/gt/{fname}")
         tracks_a = Track.from_file(f"markup/predict/{fname}")
         info = match_tracks(tracks_a, tracks_b)
-        metrics.metrics[fname] = info.score
-        logs.append(f"{fname} -> {info.score:0.3f}")
+        score_count = 1 - max(abs(len(tracks_a) - len(tracks_b)) / len(tracks_b), 1)
+        metrics.metrics_iou[fname] = info.score
+        metrics.metrics_count[fname] = score_count
+        logs.append(f"{fname} -> iou={info.score:0.3f} count={score_count:0.3f}")
         logs.append("")
         matches.append(info)
         logs.append("    " + str(info).replace("\n", "\n    "))
@@ -56,9 +62,14 @@ def calculate_metrics() -> Metrics:
         logs.append("-" * 40)
         logs.append("")
 
-    score = sum([m.score for m in matches]) / len(matches)
-    metrics.score = score
-    logs.append(f"Avg score = {score:0.3f}")
+    score_iou = sum(metrics.metrics_iou.values()) / len(metrics.metrics_iou)
+    metrics.score_iou = score_iou
+    logs.append(f"Avg IOU score = {score_iou:0.3f}")
+
+    score_count = sum(metrics.metrics_count.values()) / len(metrics.metrics_count)
+    metrics.score_count = score_count
+    logs.append(f"Avg COUNT score = {score_count:0.3f}")
+
     logs.append("")
 
     metrics.logs = "\n".join(logs)
@@ -92,7 +103,17 @@ if __name__ == "__main__":
             executor.map(video_to_intervals, names)
 
         metrics = calculate_metrics()
-        mlflow.log_metric("Overall Score", metrics.score)
-        for metric_name, metric_value in metrics.metrics.items():
-            mlflow.log_metric(metric_name.removesuffix(".yaml"), metric_value)
-            mlflow.log_param("logs", metrics.logs)
+
+        mlflow.log_metric("[IOU] Overall Score", metrics.score_iou)
+        mlflow.log_metric("[COUNT] Overall Score", metrics.score_count)
+
+        for metric_name, metric_value in metrics.metrics_iou.items():
+            mlflow.log_metric(
+                "[IOU] " + metric_name.removesuffix(".yaml"), metric_value
+            )
+        for metric_name, metric_value in metrics.metrics_count.items():
+            mlflow.log_metric(
+                "[COUNT] " + metric_name.removesuffix(".yaml"), metric_value
+            )
+
+        mlflow.log_param("logs", metrics.logs)
