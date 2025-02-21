@@ -1,4 +1,6 @@
 import os.path
+import sys
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 
 import git
@@ -13,9 +15,12 @@ from tracker import PersonTracker
 class Metrics:
     metrics: dict[str, float]
     score: float
+    logs: str
 
 
-def video_to_intervals(video_filename: str, intervals_filename: str) -> None:
+def video_to_intervals(name: str) -> None:
+    video_filename = f"videos/{name}.mp4"
+    intervals_filename = f"markup/predict/{name}.yaml"
     if os.path.exists(intervals_filename):
         return
     tracker = PersonTracker(video_filename)
@@ -23,41 +28,47 @@ def video_to_intervals(video_filename: str, intervals_filename: str) -> None:
     tracker.save_intervals(intervals_filename)
 
 
-def videos_to_intervals() -> None:
+def list_video_names() -> list[str]:
+    names = []
     for fname in os.listdir("videos"):
         if "__out" in fname:
             continue
         name = fname.removesuffix(".mp4")
-        video_to_intervals(f"videos/{name}.mp4", f"markup/predict/{name}.yaml")
+        names.append(name)
+    return names
 
 
-def calculate_metrics(fname: str) -> Metrics:
+def calculate_metrics() -> Metrics:
     matches = []
     os.makedirs("markup/predict", exist_ok=True)
-    metrics = Metrics(metrics={}, score=0)
-    with open(fname, "w") as f:
-        for fname in os.listdir("markup/predict"):
-            tracks_b = Track.from_file(f"markup/gt/{fname}")
-            tracks_a = Track.from_file(f"markup/predict/{fname}")
-            info = match_tracks(tracks_a, tracks_b)
-            metrics.metrics[fname] = info.score
-            print(f"{fname} -> {info.score:0.3f}", file=f)
-            print(file=f)
-            matches.append(info)
-            print("    " + str(info).replace("\n", "\n    "), file=f)
-            print(file=f)
-            print("-" * 40, file=f)
-            print(file=f)
+    metrics = Metrics(metrics={}, score=0, logs="")
+    logs = []
+    for fname in os.listdir("markup/predict"):
+        tracks_b = Track.from_file(f"markup/gt/{fname}")
+        tracks_a = Track.from_file(f"markup/predict/{fname}")
+        info = match_tracks(tracks_a, tracks_b)
+        metrics.metrics[fname] = info.score
+        logs.append(f"{fname} -> {info.score:0.3f}")
+        logs.append("")
+        matches.append(info)
+        logs.append("    " + str(info).replace("\n", "\n    "))
+        logs.append("")
+        logs.append("-" * 40)
+        logs.append("")
 
-        score = sum([m.score for m in matches]) / len(matches)
-        metrics.score = score
-        print(f"Avg score = {score:0.3f}", file=f)
-        print(file=f)
+    score = sum([m.score for m in matches]) / len(matches)
+    metrics.score = score
+    logs.append(f"Avg score = {score:0.3f}")
+    logs.append("")
 
-        return metrics
+    metrics.logs = "\n".join(logs)
+
+    return metrics
 
 
 if __name__ == "__main__":
+    workers = int(sys.argv[1]) if len(sys.argv) > 1 else 1
+
     os.environ["MLFLOW_TRACKING_USERNAME"] = settings.mlflow.username
     os.environ["MLFLOW_TRACKING_PASSWORD"] = settings.mlflow.password
 
@@ -68,20 +79,20 @@ if __name__ == "__main__":
 
     with mlflow.start_run(
         experiment_id=str(settings.mlflow.experiment_id),
-        run_name=f"{settings.mlflow.run_name}",
+        run_name=f"{settings.mlflow.run_name}: {settings.pose_model} + {settings.reid_model}",
         tags={
             "mlflow.source.name": f"{settings.mlflow.git_base_url}/../../../tree/{sha}"
         },
     ):
-        videos_to_intervals()
-        metrics = calculate_metrics("metrics.log")
+        mlflow.log_param("pose_model", settings.pose_model)
+        mlflow.log_param("reid_model", settings.reid_model)
 
+        names = list_video_names()
+        with ProcessPoolExecutor() as executor:
+            executor.map(video_to_intervals, names)
+
+        metrics = calculate_metrics()
         mlflow.log_metric("Overall Score", metrics.score)
         for metric_name, metric_value in metrics.metrics.items():
             mlflow.log_metric(metric_name.removesuffix(".yaml"), metric_value)
-
-        with open("metrics.log") as f:
-            logs = f.read()
-            mlflow.log_param("logs", logs)
-
-        # mlflow.log_artifact("metrics.log")
+            mlflow.log_param("logs", metrics.logs)
