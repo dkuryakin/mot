@@ -1,99 +1,83 @@
 import json
 import os.path
+import sys
 from collections import defaultdict
 
-import yaml
-from loguru import logger
-import sys
-from pydantic_settings import BaseSettings
 import cv2
 import norfair
 import numpy as np
+import yaml
+from loguru import logger
 from norfair import Detection, Tracker, Video
 from norfair.distances import create_keypoints_voting_distance
 from norfair.tracker import TrackedObject
-from torchreid.reid.utils import FeatureExtractor
-from ultralytics import YOLO
-from ultralytics.engine.results import Results
 
-
-class Config(BaseSettings):
-    # yolo detector
-    conf_threshold: float = 0.25
-    iou_threshold: float = 0.45
-    img_size: tuple[int, int] = (640, 640)
-    classes: tuple[int, ...] = (0,)
-
-    # tracker
-    past_detections_length: int = 50
-    init_delay: int = 8
-    hit_counter_max: int = 16
-    pointwise_hit_max: int = 4
-
-    # tracker distance
-    distance_threshold: float = 0.8
-    keypoint_scale_factor: float = 40.0
-
-    # reid distance
-    max_dist_same_reid: float = 0.25
-
-
-config = Config()
+from models.pose.base import BasePoseModel, PoseResult
+from models.reid.base import BaseReIDModel
+from settings import settings
 
 
 class PersonTracker:
     def __init__(self, input_path: str | int):
         self.input_path = input_path
 
-        self.yolo = YOLO("./checkpoints/yolo11m-pose.pt")
-
-        self.extractor = FeatureExtractor(
-            model_name="osnet_x1_0",
-            model_path="./checkpoints/osnet_x1_0_imagenet.pth",
-            verbose=False,
-        )
+        self.pose_model = BasePoseModel.create(settings.pose_model)
+        self.reid_model = BaseReIDModel.create(settings.reid_model)
 
         if isinstance(input_path, int):
             self.video = Video(camera=input_path)
         else:
             self.video = Video(
-                input_path=input_path, output_path=input_path + "__out.mp4"
+                input_path=input_path,
+                output_path=input_path + "__out.mp4" if settings.debug else None,
             )
         self._init_tracker()
 
         self._intervals: dict[str | int, list[list[int]]] = defaultdict(list[list[int]])
 
     def _init_tracker(self) -> None:
-        keypoint_thresh = self.video.input_height / config.keypoint_scale_factor
+        keypoint_thresh = (
+            self.video.input_height / settings.tracker.keypoint_scale_factor
+        )
         self.tracker = Tracker(
             distance_function=create_keypoints_voting_distance(
                 keypoint_distance_threshold=keypoint_thresh,
-                detection_threshold=config.conf_threshold,
+                detection_threshold=settings.pose.conf_threshold,
             ),
-            distance_threshold=config.distance_threshold,
-            detection_threshold=config.conf_threshold,
-            initialization_delay=config.init_delay,
-            hit_counter_max=config.hit_counter_max,
-            pointwise_hit_counter_max=config.pointwise_hit_max,
+            distance_threshold=settings.tracker.distance_threshold,
+            detection_threshold=settings.pose.conf_threshold,
+            initialization_delay=settings.tracker.init_delay,
+            hit_counter_max=settings.tracker.hit_counter_max,
+            pointwise_hit_counter_max=settings.tracker.pointwise_hit_max,
             reid_distance_function=self.reid_distance,
-            reid_distance_threshold=config.max_dist_same_reid,
-            reid_hit_counter_max=1000,
-            past_detections_length=config.past_detections_length,
+            reid_distance_threshold=settings.tracker.max_dist_same_reid,
+            reid_hit_counter_max=settings.tracker.reid_hit_counter_max,
+            past_detections_length=settings.tracker.past_detections_length,
         )
 
     def process_video(self) -> None:
-        for frame_number, frame in enumerate(self.video):
-            processed_frame = self._process_frame(
-                frame_number=frame_number, frame=frame
-            )
-            self.video.write(processed_frame)
-            cv2.imshow("Tracking", cv2.resize(processed_frame, None, fx=0.75, fy=0.75))
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
+        try:
+            for frame_number, frame in enumerate(self.video):
+                processed_frame = self._process_frame(
+                    frame_number=frame_number, frame=frame
+                )
+                if settings.debug:
+                    self.video.write(processed_frame)
+                    cv2.imshow(
+                        "Tracking", cv2.resize(processed_frame, None, fx=0.75, fy=0.75)
+                    )
+                    if cv2.waitKey(1) & 0xFF == ord("q"):
+                        break
+        except:
+            if isinstance(self.input_path, str) and os.path.exists(
+                self.input_path + "__out.mp4"
+            ):
+                os.remove(self.input_path + "__out.mp4")
+            raise
 
     def _process_frame(self, frame_number: int, frame: np.ndarray) -> np.ndarray:
-        yolo_results = self._run_yolo_detection(frame)
-        detections = self._create_detections(frame, yolo_results)
+        pose_results = self.pose_model(frame)
+        detections = self._create_detections(frame, pose_results)
         tracked_objects = self.tracker.update(detections=detections)
 
         for obj in tracked_objects:
@@ -107,31 +91,25 @@ class PersonTracker:
             else:
                 self._intervals[obj_id].append([frame_number, frame_number])
 
-        return self._draw_results(frame, tracked_objects)
+        if settings.debug:
+            return self._draw_results(frame, tracked_objects)
 
-    def _run_yolo_detection(self, frame: np.ndarray) -> Results:
-        return self.yolo(
-            frame,
-            conf=config.conf_threshold,
-            iou=config.iou_threshold,
-            imgsz=config.img_size,
-            classes=config.classes,
-        )[0]
+        return frame
 
     def _create_detections(
-        self, frame: np.ndarray, results: Results
+        self, frame: np.ndarray, results: PoseResult
     ) -> list[Detection]:
         detections = []
         crops = {}
 
-        if results.keypoints.conf is None:
+        if results.keypoints_scores is None:
             return []
 
         for idx, (kps, conf, bbox) in enumerate(
             zip(
-                results.keypoints.xy.cpu().numpy(),
-                results.keypoints.conf.cpu().numpy(),
-                results.boxes.xyxy.cpu().numpy(),
+                results.keypoints_xy,
+                results.keypoints_scores,
+                results.boxes_xyxy,
             )
         ):
             conf[np.all(kps == [0, 0], axis=1)] = 0
@@ -148,9 +126,9 @@ class PersonTracker:
             )
 
         if crops:
-            features = self.extractor(list(crops.values())).cpu().numpy()
+            features = self.reid_model(list(crops.values()))
             for idx, feat in zip(crops.keys(), features):
-                detections[idx].embedding["reid"] = feat
+                detections[idx].embedding["reid"] = feat.embeddings
 
         return detections
 
@@ -187,7 +165,7 @@ class PersonTracker:
         return 1 - np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
     def save_intervals(self, filename: str) -> None:
-        with open(filename, "wb") as f:
+        with open(filename, "w") as f:
             if filename.lower().endswith(".json"):
                 json.dump(self._intervals, f)  # type: ignore
             elif filename.lower().endswith(".yml") or filename.lower().endswith(

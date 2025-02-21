@@ -58,18 +58,20 @@ def calculate_metrics(fname: str) -> Metrics:
 
 
 if __name__ == "__main__":
-    os.environ["MLFLOW_TRACKING_USERNAME"] = settings.mlflow_username
-    os.environ["MLFLOW_TRACKING_PASSWORD"] = settings.mlflow_password
+    os.environ["MLFLOW_TRACKING_USERNAME"] = settings.mlflow.username
+    os.environ["MLFLOW_TRACKING_PASSWORD"] = settings.mlflow.password
 
     repo = git.Repo(search_parent_directories=True)
     sha = repo.head.object.hexsha
 
-    mlflow.set_tracking_uri(settings.mlflow_uri)
+    mlflow.set_tracking_uri(settings.mlflow.uri)
 
     with mlflow.start_run(
-        experiment_id=str(settings.mlflow_experiment_id),
-        run_name=f"{settings.mlflow_run_prefix}",
-        tags={"mlflow.source.name": f"{settings.git_base_url}/../../../tree/{sha}"},
+        experiment_id=str(settings.mlflow.experiment_id),
+        run_name=f"{settings.mlflow.run_name}",
+        tags={
+            "mlflow.source.name": f"{settings.mlflow.git_base_url}/../../../tree/{sha}"
+        },
     ):
         videos_to_intervals()
         metrics = calculate_metrics("metrics.log")
