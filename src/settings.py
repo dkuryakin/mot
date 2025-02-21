@@ -10,7 +10,7 @@ class MlflowSettings(BaseSettings):
     username: str = "deployer"
     password: str = "U0KjTPPDJE"
     experiment_id: int = 16
-    run_name: str = "opensource"
+    run_name: str = "tracker"
     git_base_url: str = "https://github.com/dkuryakin/mot"
 
 

@@ -66,15 +66,6 @@ def calculate_metrics() -> Metrics:
     return metrics
 
 
-def process_video(name: str) -> None:
-    video_to_intervals(name)
-    metrics = calculate_metrics()
-    mlflow.log_metric("Overall Score", metrics.score)
-    for metric_name, metric_value in metrics.metrics.items():
-        mlflow.log_metric(metric_name.removesuffix(".yaml"), metric_value)
-        mlflow.log_param("logs", metrics.logs)
-
-
 if __name__ == "__main__":
     workers = int(sys.argv[1])
 
@@ -88,11 +79,20 @@ if __name__ == "__main__":
 
     with mlflow.start_run(
         experiment_id=str(settings.mlflow.experiment_id),
-        run_name=f"{settings.mlflow.run_name}",
+        run_name=f"{settings.mlflow.run_name}: {settings.pose_model} + {settings.reid_model}",
         tags={
             "mlflow.source.name": f"{settings.mlflow.git_base_url}/../../../tree/{sha}"
         },
     ):
+        mlflow.log_param("pose_model", settings.pose_model)
+        mlflow.log_param("reid_model", settings.reid_model)
+
         names = list_video_names()
         with ProcessPoolExecutor() as executor:
-            executor.map(process_video, names)
+            executor.map(video_to_intervals, names)
+
+        metrics = calculate_metrics()
+        mlflow.log_metric("Overall Score", metrics.score)
+        for metric_name, metric_value in metrics.metrics.items():
+            mlflow.log_metric(metric_name.removesuffix(".yaml"), metric_value)
+            mlflow.log_param("logs", metrics.logs)
