@@ -54,6 +54,7 @@ class Settings(BaseSettings):
 
     device: str = "cpu"
     debug: bool = True
+    visible: bool = False
 
 
 settings = Settings()

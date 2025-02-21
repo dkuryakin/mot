@@ -63,6 +63,7 @@ class PersonTracker:
                 )
                 if settings.debug:
                     self.video.write(processed_frame)
+                if settings.visible:
                     cv2.imshow(
                         "Tracking", cv2.resize(processed_frame, None, fx=0.75, fy=0.75)
                     )
