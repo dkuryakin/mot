@@ -51,7 +51,7 @@ def calculate_metrics() -> Metrics:
         tracks_b = Track.from_file(f"markup/gt/{fname}")
         tracks_a = Track.from_file(f"markup/predict/{fname}")
         info = match_tracks(tracks_a, tracks_b)
-        score_count = 1 - max(abs(len(tracks_a) - len(tracks_b)) / len(tracks_b), 1)
+        score_count = 1 - min(abs(len(tracks_a) - len(tracks_b)) / len(tracks_b), 1)
         metrics.metrics_iou[fname] = info.score
         metrics.metrics_count[fname] = score_count
         logs.append(f"{fname} -> iou={info.score:0.3f} count={score_count:0.3f}")
