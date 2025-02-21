@@ -104,16 +104,14 @@ if __name__ == "__main__":
 
         metrics = calculate_metrics()
 
-        mlflow.log_metric("[IOU] Overall Score", metrics.score_iou)
-        mlflow.log_metric("[COUNT] Overall Score", metrics.score_count)
+        mlflow.log_metric("IOU: Overall Score", metrics.score_iou)
+        mlflow.log_metric("COUNT: Overall Score", metrics.score_count)
 
         for metric_name, metric_value in metrics.metrics_iou.items():
-            mlflow.log_metric(
-                "[IOU] " + metric_name.removesuffix(".yaml"), metric_value
-            )
+            mlflow.log_metric("IOU: " + metric_name.removesuffix(".yaml"), metric_value)
         for metric_name, metric_value in metrics.metrics_count.items():
             mlflow.log_metric(
-                "[COUNT] " + metric_name.removesuffix(".yaml"), metric_value
+                "COUNT: " + metric_name.removesuffix(".yaml"), metric_value
             )
 
         mlflow.log_param("logs", metrics.logs)
